@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y \
     && apt-get install -y nodejs \
     && docker-php-ext-configure gd --with-freetype --with-jpeg \
     && docker-php-ext-install -j$(nproc) pdo_mysql mbstring exif pcntl bcmath gd zip \
+    && npm install -g yarn \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
@@ -38,16 +39,17 @@ RUN composer install --no-dev --optimize-autoloader --no-interaction --no-script
 
 # Copy package files for Node dependencies (cached if package files don't change)
 COPY package*.json ./
-RUN npm ci
+RUN yarn install --frozen-lockfile
 
 # Copy application files needed for build
 COPY --chown=www-data:www-data . .
 
 # Finalize composer and build assets
 RUN composer dump-autoload --optimize --classmap-authoritative \
-    && npm run build \
-    && rm -rf node_modules package-lock.json \
-    && npm cache clean --force
+    && yarn build \
+    && yarn cache clean \
+    && rm -rf node_modules package-lock.json 
+
 
 # Set permissions
 RUN chown -R www-data:www-data storage bootstrap/cache \
