@@ -1,4 +1,4 @@
-FROM python:3.10-slim AS builder
+FROM python:3.12-slim AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -22,7 +22,7 @@ RUN pip install --user --no-warn-script-location gunicorn
 # ============================================
 # Final Stage
 # ============================================
-FROM python:3.10-slim
+FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -105,7 +105,7 @@ RUN echo '#!/bin/bash\n\
 set -e\n\
 \n\
 echo "Starting Gunicorn in background..."\n\
-gunicorn fervent.wsgi:application \\\n\
+gunicorn murad_al_masiyah_backend.wsgi:application \\\n\
     --bind 127.0.0.1:8000 \\\n\
     --workers 4 \\\n\
     --threads 2 \\\n\
@@ -130,8 +130,5 @@ RUN chown -R www-data:www-data /app/static /app/staticfiles /app/media /app/logs
 VOLUME ["/app/media", "/app/staticfiles", "/app/logs"]
 
 EXPOSE 80
-
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:80/ || exit 1
 
 CMD ["/app/start.sh"]
