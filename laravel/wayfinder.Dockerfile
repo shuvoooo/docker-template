@@ -1,62 +1,59 @@
-FROM php:8.3-fpm
+FROM php:8.3-fpm AS builder
 
-# Set working directory
+# Stage 1: builder — includes Node.js, yarn, build tools, and Composer for optimised vendor/ and public/build/
 WORKDIR /var/www/html
 
-# Install system dependencies and Node.js in a single layer
-RUN apt-get update && apt-get install -y \
-    git \
-    curl \
-    libonig-dev \
-    libxml2-dev \
-    nginx \
-    supervisor \
-    libpng-dev \
-    libjpeg-dev \
-    libfreetype6-dev \
-    libzip-dev \
-    zip \
-    unzip \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git curl \
+    libonig-dev libxml2-dev \
+    libpng-dev libjpeg-dev libfreetype6-dev \
+    libzip-dev zip unzip \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
+    && apt-get install -y --no-install-recommends nodejs \
     && docker-php-ext-configure gd --with-freetype --with-jpeg \
     && docker-php-ext-install -j$(nproc) pdo_mysql mbstring exif pcntl bcmath gd zip \
     && npm install -g yarn \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+    && apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-# Get latest Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
-# Create storage directories
-RUN mkdir -p storage/framework/{sessions,views,cache} storage/logs bootstrap/cache
-
-# Copy composer files first for better layer caching
 COPY composer.json composer.lock ./
-
-# Install PHP dependencies (cached if composer files don't change)
 RUN composer install --no-dev --optimize-autoloader --no-interaction --no-scripts --no-autoloader
 
-# Copy package files for Node dependencies (cached if package files don't change)
-COPY package*.json ./
+
+COPY package.json yarn.lock ./
 RUN yarn install --frozen-lockfile
 
-# Copy application files needed for build
-COPY --chown=www-data:www-data . .
-
-# Finalize composer and build assets
+COPY . .
 RUN composer dump-autoload --optimize --classmap-authoritative \
     && yarn build \
     && yarn cache clean \
-    && rm -rf node_modules package-lock.json 
+    && rm -rf node_modules
 
+# Stage 2: final — runtime only, no Node.js/yarn/build tools
+FROM php:8.3-fpm AS final
 
-# Set permissions
-RUN chown -R www-data:www-data storage bootstrap/cache \
-    && chmod -R 775 storage bootstrap/cache
+WORKDIR /var/www/html
 
-# Remove .env file if exists
-RUN rm -f .env
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libonig-dev libxml2-dev \
+    libpng-dev libjpeg-dev libfreetype6-dev \
+    libzip-dev \
+    nginx supervisor \
+    weasyprint \
+    && docker-php-ext-configure gd --with-freetype --with-jpeg \
+    && docker-php-ext-install -j$(nproc) pdo_mysql mbstring exif pcntl bcmath gd zip \
+    && apt-get purge -y libonig-dev libxml2-dev libpng-dev libjpeg-dev libfreetype6-dev libzip-dev \
+    && apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+COPY --chown=www-data:www-data . .
+COPY --from=builder --chown=www-data:www-data /var/www/html/vendor ./vendor/
+COPY --from=builder --chown=www-data:www-data /var/www/html/public/build ./public/build/
+
+RUN mkdir -p storage/framework/{sessions,views,cache} storage/logs bootstrap/cache \
+    && chown -R www-data:www-data storage bootstrap/cache \
+    && chmod -R 775 storage bootstrap/cache \
+    && rm -f .env
 
 # Nginx configuration
 COPY <<'EOF' /etc/nginx/sites-available/default
@@ -84,7 +81,12 @@ server {
     location ~ \.php$ {
         fastcgi_pass 127.0.0.1:9000;
         fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
+        # Forward the scheme set by the upstream TLS-terminating proxy
+        fastcgi_param HTTP_X_FORWARDED_PROTO $http_x_forwarded_proto;
+        fastcgi_param HTTP_X_FORWARDED_FOR   $http_x_forwarded_for;
         include fastcgi_params;
+        fastcgi_read_timeout 120s;
+        fastcgi_send_timeout 120s;
         fastcgi_buffer_size 128k;
         fastcgi_buffers 256 16k;
         fastcgi_busy_buffers_size 256k;
@@ -136,7 +138,7 @@ stdout_logfile=/var/www/html/storage/logs/scheduler.log
 
 [program:laravel-queue]
 process_name=%(program_name)s
-command=php /var/www/html/artisan queue:work
+command=php /var/www/html/artisan queue:work --tries=3 --timeout=90 --sleep=3 --backoff=3
 autostart=true
 autorestart=true
 user=www-data
@@ -144,7 +146,7 @@ redirect_stderr=true
 stdout_logfile=/var/www/html/storage/logs/queue.log
 EOF
 
-# Create entrypoint script
+# Entrypoint script
 COPY <<'EOF' /usr/local/bin/docker-entrypoint.sh
 #!/bin/bash
 set -e
@@ -154,7 +156,7 @@ FLAG_FILE="/var/www/html/storage/.migrations_done"
 if [ ! -f "$FLAG_FILE" ]; then
     echo "First run detected - Running migrations..."
     php artisan storage:link
-    php artisan migrate --force
+    php artisan migrate --force --isolated
     echo "Migrations completed!"
     touch "$FLAG_FILE"
 else
@@ -162,6 +164,9 @@ else
 fi
 
 php artisan optimize:clear
+php artisan config:cache
+php artisan route:cache
+php artisan view:cache
 
 exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
 EOF
