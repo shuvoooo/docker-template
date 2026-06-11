@@ -7,6 +7,7 @@ services:
       - --allow_dynamic_housekeeping=true
       - --housekeeping_interval=10s
       - --store_container_labels=false
+      - --disable_metrics=disk,diskIO 
     devices:
       - /dev/kmsg:/dev/kmsg
     volumes:
