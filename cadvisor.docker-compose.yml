@@ -3,9 +3,9 @@ services:
     image: ghcr.io/google/cadvisor:${VERSION:-v0.53.0}
     privileged: true
     command:
-      - --docker_only=true           # ignore non-Docker cgroups (reduces noise)
+      - --docker_only=true
       - --allow_dynamic_housekeeping=true
-      - --housekeeping_interval=10s  # default 1s, reduces churn
+      - --housekeeping_interval=10s
       - --store_container_labels=false
     devices:
       - /dev/kmsg:/dev/kmsg
@@ -14,6 +14,7 @@ services:
       - /var/run:/var/run:ro
       - /sys:/sys:ro
       - /var/lib/docker/:/var/lib/docker:ro
+      - /var/lib/docker/image/overlay2:/rootfs/var/lib/docker/image/overlayfs:ro  # fix path mismatch
       - /dev/disk/:/dev/disk:ro
     restart: unless-stopped
     networks:
