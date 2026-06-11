@@ -14,7 +14,6 @@ services:
       - /var/run:/var/run:ro
       - /sys:/sys:ro
       - /var/lib/docker/:/var/lib/docker:ro
-      - /var/lib/docker/image/overlay2:/rootfs/var/lib/docker/image/overlayfs:ro  # fix path mismatch
       - /dev/disk/:/dev/disk:ro
     restart: unless-stopped
     networks:
