@@ -1,7 +1,6 @@
 services:
   cadvisor:
     image: ghcr.io/google/cadvisor:${VERSION:-v0.53.0}
-    container_name: cadvisor
     privileged: true
     devices:
       - /dev/kmsg:/dev/kmsg
